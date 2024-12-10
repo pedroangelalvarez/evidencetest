@@ -1,5 +1,6 @@
 import React, { useRef, useState, useEffect } from "react";
-import { Document, Packer, Paragraph, TextRun, ImageRun } from "docx";
+import { Document, Packer, Paragraph, Media, TextRun, ImageRun } from "docx";
+import { saveAs } from "file-saver";
 import * as fs from "file-saver"; 
 import "./index.css";
 
@@ -8,7 +9,8 @@ const FrameGallery = () => {
   const [videoSrc, setVideoSrc] = useState(null);
   const [thumbnails, setThumbnails] = useState([]);
   const [selectedFrame, setSelectedFrame] = useState(null);
-  const [savedFrames, setSavedFrames] = useState([]); // Estado para almacenar miniaturas seleccionadas
+  const [savedFrames, setSavedFrames] = useState([]); // Miniaturas seleccionadas
+  const [originalFrames, setOriginalFrames] = useState([]); // Imágenes originales
   const canvasRef = useRef(document.createElement("canvas"));
   const [loading, setLoading] = useState(false);
 
@@ -81,9 +83,25 @@ const FrameGallery = () => {
   };
 
   const handleThumbnailDoubleClick = (thumbnail) => {
-    setSavedFrames((prevFrames) => [...prevFrames, thumbnail]); // Add the clicked thumbnail to the saved frames
-    setHighlightedThumbnail(thumbnail);
-};
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext("2d");
+
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+
+    video.currentTime = thumbnail.time;
+
+    video.addEventListener("seeked", function captureOriginalHandler() {
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const originalImage = canvas.toDataURL("image/jpeg");
+
+      setSavedFrames((prev) => [...prev, thumbnail]); // Guarda miniatura
+      setOriginalFrames((prev) => [...prev, originalImage]); // Guarda imagen original
+      setHighlightedThumbnail(thumbnail);
+      video.removeEventListener("seeked", captureOriginalHandler);
+    });
+  };
 
   // Remove a saved frame from the saved frames array
   const handleSavedFrameClick = (thumbnailToRemove) => {
@@ -93,50 +111,47 @@ const FrameGallery = () => {
   };
 
   // Genera y descarga un archivo Word con las imágenes
-  const handleDownloadAllToWord = async () => {
+  const handleDownloadAllToWord = () => {
+    const panel = document.getElementById("fotogramas");
+    const images = panel.querySelectorAll("img");
+
+    if (!savedFrames || savedFrames.length === 0) {
+      alert("No hay imágenes para descargar.");
+      return;
+    }
+  
+    // Crear un documento Word con las imágenes del panel inferior
     const doc = new Document({
       sections: [
         {
-          properties: {},
-          children: await Promise.all(savedFrames.map(async (frame, index) => {
-            const video = videoRef.current;
-            const canvas = canvasRef.current;
-            const ctx = canvas.getContext("2d");
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
+          children: Array.from(images).map((img) => {
+            const base64Data = img.src.split(",")[1];
+            const buffer = Uint8Array.from(atob(base64Data), (char) =>
+              char.charCodeAt(0)
+            );
   
-            video.currentTime = frame.time;
-  
-            return new Promise((resolve) => {
-              video.addEventListener("seeked", function downloadHandler() {
-                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                const imageDataUrl = canvas.toDataURL("image/jpeg");
-  
-                // Crear el ImageRun con la imagen en base64
-                const imageRun = new ImageRun({
-                  data: imageDataUrl,
+            return new Paragraph({
+              children: [
+                new ImageRun({
+                  data: buffer, // Convertir Base64 a binario
                   transformation: {
-                    width: 500,
-                    height: 250,
+                    width: 550, // Ajusta el tamaño de las imágenes
+                    height: 300,
                   },
-                });
-  
-                // Crear el párrafo con la imagen
-                const paragraph = new Paragraph({
-                  children: [imageRun],
-                });
-  
-                resolve(paragraph);
-                video.removeEventListener("seeked", downloadHandler);
-              });
+                }),
+              ],
             });
-          })),
+          }),
         },
       ],
     });
-  
+
+    // Generar y descargar el archivo Word
     Packer.toBlob(doc).then((blob) => {
-      fs.saveAs(blob, `frames-${new Date().toISOString()}.docx`);
+      fs.saveAs(blob, `Evidencia-${new Date().toISOString()}.docx`);
+    }).catch((error) => {
+      console.error("Error al generar el archivo Word:", error);
+      alert("Hubo un error al generar el archivo Word. Por favor, revisa la consola para más detalles.");
     });
   };
 
@@ -255,6 +270,7 @@ const FrameGallery = () => {
               boxShadow: "0 2px 4px rgba(0, 0, 0, 0.1)",
             }}
           >
+            
             {savedFrames.map((frame, index) => (
               <div
                 key={index}
@@ -280,6 +296,13 @@ const FrameGallery = () => {
                   }}
                 />
               </div>
+            ))}
+          </div>
+
+          {/* Panel invisible para imágenes originales */}
+          <div id="fotogramas" style={{ display: "none" }}>
+            {originalFrames.map((image, index) => (
+              <img key={index} src={image} alt={`Original frame ${index}`} />
             ))}
           </div>
 
